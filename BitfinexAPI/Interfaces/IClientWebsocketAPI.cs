@@ -1,7 +1,6 @@
 ﻿namespace BitfinexAPI.Interfaces
 {
-    class IClientWebsocketAPI
+    public interface IClientWebsocketAPI
     {
-
     }
 }

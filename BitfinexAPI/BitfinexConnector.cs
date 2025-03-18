@@ -12,6 +12,14 @@ namespace BitfinexAPI
     public class BitfinexConnector : ITestConnector
     {
         #region ConnectorRealization
+        private IClientRestAPI _clientRestAPI;
+        private IClientWebsocketAPI _clientWebsocketAPI;
+
+        public BitfinexConnector(IClientRestAPI clientRestAPI, IClientWebsocketAPI clientWebsocketAPI)
+        {
+            _clientRestAPI = clientRestAPI;
+            _clientWebsocketAPI = clientWebsocketAPI;
+        }
 
         #endregion
 
