@@ -6,35 +6,35 @@ using System.Threading.Tasks;
 using BitfinexAPI.Interfaces;
 using BitfinexAPI.TestHQ;
 using Microsoft.AspNetCore.WebUtilities;
+using static System.Collections.Specialized.BitVector32;
 
 namespace BitfinexAPI
 {
     class BitfinexClientRestAPI : IClientRestAPI
     {
-        protected HttpClient _httpClient;
-        public BitfinexClientRestAPI(HttpClient httpClient) 
+        protected static HttpClient _httpClient;
+
+        static BitfinexClientRestAPI()
         {
-            _httpClient = httpClient;
+            _httpClient = new HttpClient();
+            _httpClient.Timeout = new TimeSpan(TimeSpan.TicksPerSecond * 15);
+        }
+        public BitfinexClientRestAPI()
+        {
             
         }
 
 
-        protected Task<string?> GetInfoAsync(string addUrl, Dictionary<string, string?>? histParameters, string infoType)
+        protected Task<string?> GetInfoAsync(string url)
         {
-            return new Task<string?>(() =>
+            return Task<string?>.Factory.StartNew(() =>
             {
-                string baseUrl = "https://api-pub.bitfinex.com/v2/" + infoType + "/" + addUrl +
-                (infoType == "ticker" ? "" : "/hist");
-                string formedUrl = (histParameters is null ? 
-                    baseUrl : QueryHelpers.AddQueryString(baseUrl, histParameters));
-
-                if (!Uri.IsWellFormedUriString(formedUrl, UriKind.Absolute))
-                    return null;
-
+                if (!Uri.IsWellFormedUriString(url, UriKind.Absolute))
+                    return "invalid url";
                 HttpRequestMessage request = new HttpRequestMessage
                 {
                     Method = HttpMethod.Get,
-                    RequestUri = new Uri(formedUrl),
+                    RequestUri = new Uri(url),
                     Headers =
                     {
                         { "accept", "application/json" },
@@ -45,23 +45,33 @@ namespace BitfinexAPI
                 {
                     response.EnsureSuccessStatusCode();
                     jsonBody = response.Content.ReadAsStringAsync().Result;
+                    
                 }
 
                 return jsonBody;
-            });
+            }, TaskCreationOptions.AttachedToParent);
         }
-        public Task<string?> GetCandlesAsync(string candle, Dictionary<string, string?> histParameters)
+        public Task<string?> GetCandlesAsync(string candle, string section, Dictionary<string, string?>? parameters)
         {
-            return GetInfoAsync(candle, histParameters, "candles");
+            string baseUrl = "https://api-pub.bitfinex.com/v2/" + "candles/" + candle + "/" +
+                section;
+            string formedUrl = (parameters is null ?
+                baseUrl : QueryHelpers.AddQueryString(baseUrl, parameters));
+            
+            return GetInfoAsync(formedUrl);
         }
         public Task<string?> GetTickersAsync(string symbol)
         {
-            return GetInfoAsync(symbol, null, "ticker");
+            string baseUrl = "https://api-pub.bitfinex.com/v2/" + "ticker/" + symbol;
+            return GetInfoAsync(baseUrl);
         }
 
-        public Task<string?> GetTradesAsync(string symbol, Dictionary<string, string?> histParameters)
+        public Task<string?> GetTradesAsync(string symbol, Dictionary<string, string?>? parameters)
         {
-            return GetInfoAsync(symbol, histParameters, "trades");
+            string baseUrl = "https://api-pub.bitfinex.com/v2/" + "trades/" + symbol + "/hist";
+            string formedUrl = (parameters is null ?
+                baseUrl : QueryHelpers.AddQueryString(baseUrl, parameters));
+            return GetInfoAsync(formedUrl);
         }
     }
 }
