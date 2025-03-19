@@ -15,13 +15,39 @@ namespace BitfinexAPI
         #region ConnectorRealization
         private IClientRestAPI _clientRestAPI;
         private IClientWebsocketAPI _clientWebsocketAPI;
+        private Task task;
 
-        public BitfinexConnector(IClientRestAPI clientRestAPI, IClientWebsocketAPI clientWebsocketAPI)
+        private static Dictionary<string, int> _subscribedCandles;
+        private static Dictionary<string, int> _subscribedTrades;
+
+        public void WAIT()
+        {
+            task.Wait();
+        }
+        static BitfinexConnector()
+        {
+            _subscribedCandles = new();
+            _subscribedTrades = new();
+        }
+
+        public BitfinexConnector(
+            IClientRestAPI clientRestAPI,
+            IClientWebsocketAPI clientWebsocketAPI)
         {
             _clientRestAPI = clientRestAPI;
             _clientWebsocketAPI = clientWebsocketAPI;
-        }
+            _clientWebsocketAPI.OnMessageReceived += OnMessageReceived;
 
+            
+        }
+        public void Reconnect()
+        {
+            if (!_clientWebsocketAPI.ConnectionIsOpen())
+            {
+                _clientWebsocketAPI.Connect().Wait();
+                task = _clientWebsocketAPI.GetMessageAsync();
+            }
+        }
         #endregion
 
         #region Rest
@@ -47,7 +73,7 @@ namespace BitfinexAPI
                         parametersIsNull = false;
                         parameters.Add("limit", count.ToString());
                     }
-                    if(!parametersIsNull)
+                    if(parametersIsNull)
                     {
                         parameters = null;
                     }
@@ -55,7 +81,7 @@ namespace BitfinexAPI
                 string candleName = "trade:1m:" + pair + ":p" + periodInSec.ToString();
                 var jsonBody = _clientRestAPI.GetCandlesAsync(candleName, "hist", parameters).Result;
 
-                var strList = JsonSerializer.Deserialize<List<List<string>>>(jsonBody);
+                var strList = JsonSerializer.Deserialize<List<List<double>>>(jsonBody);
                 var candleList = new List<Candle>();
                 foreach (var innerList in strList)
                 {
@@ -65,12 +91,12 @@ namespace BitfinexAPI
                     Candle candle = new Candle();
                     candle.Pair = pair;
                     candle.OpenTime = DateTimeOffset.FromUnixTimeMilliseconds
-                        (int.Parse(iterator.Current)); iterator.MoveNext();
-                    candle.OpenPrice = decimal.Parse(iterator.Current); iterator.MoveNext();
-                    candle.ClosePrice = decimal.Parse(iterator.Current); iterator.MoveNext();
-                    candle.HighPrice = decimal.Parse(iterator.Current); iterator.MoveNext();
-                    candle.LowPrice = decimal.Parse(iterator.Current); iterator.MoveNext();
-                    candle.TotalVolume = decimal.Parse(iterator.Current);
+                        ((long)iterator.Current); iterator.MoveNext();
+                    candle.OpenPrice = (decimal)iterator.Current; iterator.MoveNext();
+                    candle.ClosePrice = (decimal)(iterator.Current); iterator.MoveNext();
+                    candle.HighPrice = (decimal)(iterator.Current); iterator.MoveNext();
+                    candle.LowPrice = (decimal)(iterator.Current); iterator.MoveNext();
+                    candle.TotalVolume = (decimal)(iterator.Current);
                     candle.TotalPrice = candle.OpenPrice - candle.ClosePrice;
 
                     candleList.Add(candle);
@@ -83,7 +109,7 @@ namespace BitfinexAPI
         {
             return Task<IEnumerable<Trade>>.Factory.StartNew(() =>
             {
-                var jsonBody = _clientRestAPI.GetTradesAsync(pair, new Dictionary<string, string?> 
+                var jsonBody = _clientRestAPI.GetTradesAsync("t" + pair, new Dictionary<string, string?> 
                 { 
                     ["limit"] = maxCount.ToString()
                 }).Result;
@@ -94,7 +120,7 @@ namespace BitfinexAPI
                     var iterator = innerList.GetEnumerator();
 
                     Trade trade = new Trade();
-                    trade.Pair = pair;
+                    trade.Pair = "t" + pair;
                     trade.Id = iterator.Current; iterator.MoveNext();
                     trade.Time = DateTimeOffset.FromUnixTimeMilliseconds
                         (int.Parse(iterator.Current)); iterator.MoveNext();
@@ -109,23 +135,74 @@ namespace BitfinexAPI
         #endregion
 
         #region Socket
-        public event Action<Trade> NewBuyTrade;
-        public event Action<Trade> NewSellTrade;
-        public event Action<Candle> CandleSeriesProcessing;
+        public event Action<Trade>? NewBuyTrade;
+        public event Action<Trade>? NewSellTrade;
+        public event Action<Candle>? CandleSeriesProcessing;
+        
+        static private void OnMessageReceived(IClientWebsocketAPI sender, string msg)
+        {
+            if(msg.Contains("\"event\""))
+            {
+                var dict = JsonSerializer.Deserialize<Dictionary<string, string>>(msg);
+                if (msg.Contains("\"unsubscribed\""))
+                {
+                    if (dict is not null && dict.ContainsKey("status") && dict["status"] == "OK")
+                    {
+                        int chanId = int.Parse(dict["chanId"]);
+                        if (_subscribedCandles.ContainsValue(chanId))
+                        {
+                            _subscribedCandles.Remove(_subscribedCandles.FirstOrDefault(x => x.Value == chanId).Key);
+                        }
+                        else if (_subscribedTrades.ContainsValue(chanId))
+                        {
+                            _subscribedTrades.Remove(_subscribedTrades.FirstOrDefault(x => x.Value == chanId).Key);
+                        }
 
+                    }
+                }
+                else if (msg.Contains("\"subscribed\""))
+                {
+
+                }
+            }
+        }
         public void SubscribeCandles(string pair, int periodInSec, DateTimeOffset? from = null, DateTimeOffset? to = null, long? count = 0)
         {
-            throw new NotImplementedException();
+            Reconnect();
+            _clientWebsocketAPI.SendMessageAsync(JsonSerializer.Serialize(new Dictionary<string, string?>
+            {
+                ["event"] = "subscribe",
+                ["channel"] = "candles",
+                ["key"] = "trade:1m:" + pair + (periodInSec == 0 ? "" : ":p" + periodInSec.ToString()),
+                ["from"] = from?.ToUnixTimeMilliseconds().ToString(),
+                ["to"] = to?.ToUnixTimeMilliseconds().ToString(),
+                ["limit"] = count.ToString(),
+            })).Wait();
+
         }
 
         public void SubscribeTrades(string pair, int maxCount = 100)
         {
-            throw new NotImplementedException();
+            Reconnect();
+            _clientWebsocketAPI.SendMessageAsync(JsonSerializer.Serialize(new Dictionary<string, string?>
+            {
+                ["event"] = "subscribe",
+                ["channel"] = "trades",
+                ["symbol"] = pair,
+                ["len"] = maxCount.ToString(),
+            })).Wait();
+
         }
 
         public void UnsubscribeCandles(string pair)
         {
-            throw new NotImplementedException();
+            if (!_subscribedCandles.ContainsKey(pair))
+                return;
+            _clientWebsocketAPI.SendMessageAsync(JsonSerializer.Serialize(new Dictionary<string, string?>
+            {
+                ["event"] = "unsubscribe",
+                ["chanId"] = _subscribedCandles[pair].ToString(),
+            })).Wait();
         }
 
         public void UnsubscribeTrades(string pair)

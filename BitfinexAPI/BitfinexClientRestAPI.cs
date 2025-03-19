@@ -10,9 +10,10 @@ using static System.Collections.Specialized.BitVector32;
 
 namespace BitfinexAPI
 {
-    class BitfinexClientRestAPI : IClientRestAPI
+    public class BitfinexClientRestAPI : IClientRestAPI
     {
         protected static HttpClient _httpClient;
+        protected static readonly string _baseUrl = "https://api-pub.bitfinex.com/v2/";
 
         static BitfinexClientRestAPI()
         {
@@ -53,7 +54,7 @@ namespace BitfinexAPI
         }
         public Task<string?> GetCandlesAsync(string candle, string section, Dictionary<string, string?>? parameters)
         {
-            string baseUrl = "https://api-pub.bitfinex.com/v2/" + "candles/" + candle + "/" +
+            string baseUrl = _baseUrl + "candles/" + candle + "/" +
                 section;
             string formedUrl = (parameters is null ?
                 baseUrl : QueryHelpers.AddQueryString(baseUrl, parameters));
@@ -62,13 +63,13 @@ namespace BitfinexAPI
         }
         public Task<string?> GetTickersAsync(string symbol)
         {
-            string baseUrl = "https://api-pub.bitfinex.com/v2/" + "ticker/" + symbol;
+            string baseUrl = _baseUrl + "ticker/" + symbol;
             return GetInfoAsync(baseUrl);
         }
 
         public Task<string?> GetTradesAsync(string symbol, Dictionary<string, string?>? parameters)
         {
-            string baseUrl = "https://api-pub.bitfinex.com/v2/" + "trades/" + symbol + "/hist";
+            string baseUrl = _baseUrl + "trades/" + symbol + "/hist";
             string formedUrl = (parameters is null ?
                 baseUrl : QueryHelpers.AddQueryString(baseUrl, parameters));
             return GetInfoAsync(formedUrl);
