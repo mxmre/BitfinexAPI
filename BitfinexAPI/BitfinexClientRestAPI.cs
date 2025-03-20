@@ -14,7 +14,7 @@ namespace BitfinexAPI
     {
         protected static HttpClient _httpClient;
         protected static readonly string _baseUrl = "https://api-pub.bitfinex.com/v2/";
-
+        private CancellationTokenSource _globalCancellationToken;
         static BitfinexClientRestAPI()
         {
             _httpClient = new HttpClient();
@@ -22,9 +22,12 @@ namespace BitfinexAPI
         }
         public BitfinexClientRestAPI()
         {
-            
+            _globalCancellationToken = new();
         }
-
+        ~BitfinexClientRestAPI()
+        {
+            this.Dispose();
+        }
 
         protected Task<string?> GetInfoAsync(string url)
         {
@@ -50,7 +53,7 @@ namespace BitfinexAPI
                 }
 
                 return jsonBody;
-            }, TaskCreationOptions.AttachedToParent);
+            }, _globalCancellationToken.Token);
         }
         public Task<string?> GetCandlesAsync(string candle, string section, Dictionary<string, string?>? parameters)
         {
@@ -73,6 +76,12 @@ namespace BitfinexAPI
             string formedUrl = (parameters is null ?
                 baseUrl : QueryHelpers.AddQueryString(baseUrl, parameters));
             return GetInfoAsync(formedUrl);
+        }
+
+        public void Dispose()
+        {
+            _globalCancellationToken.Cancel();
+            _globalCancellationToken.Dispose();
         }
     }
 }

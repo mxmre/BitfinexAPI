@@ -14,6 +14,7 @@ namespace BitfinexAPI
     {
         protected static readonly string _baseUrl = "wss://api-pub.bitfinex.com/ws/2";
         protected ClientWebSocket _clientWebSocket;
+        private CancellationTokenSource _globalCancellationToken;
 
         #region SocketInit
 
@@ -21,8 +22,12 @@ namespace BitfinexAPI
         {
             _clientWebSocket = new ClientWebSocket();
             OnMessageReceived = null;
+            _globalCancellationToken = new();
         }
-
+        ~BitfinexClientWebsocketAPI()
+        {
+            this.Dispose();
+        }
         public event OnMessageReceivedEventHandler? OnMessageReceived;
 
         #endregion
@@ -34,7 +39,7 @@ namespace BitfinexAPI
                 if (_clientWebSocket.State == WebSocketState.Open || _clientWebSocket.State == WebSocketState.Connecting)
                     return;
                 else _clientWebSocket.ConnectAsync(new Uri(_baseUrl), CancellationToken.None).Wait();
-            }, TaskCreationOptions.AttachedToParent);
+            }, _globalCancellationToken.Token);
         }
 
         public bool ConnectionIsOpen()
@@ -51,26 +56,33 @@ namespace BitfinexAPI
                     _clientWebSocket.CloseAsync(
                         WebSocketCloseStatus.NormalClosure,
                         "Closing connection",
-                        CancellationToken.None
+                        _globalCancellationToken.Token
                     ).Wait();
                 }
 
                 _clientWebSocket.Dispose();
                 _clientWebSocket = new ClientWebSocket();
-            }, TaskCreationOptions.AttachedToParent);
+            }, _globalCancellationToken.Token);
             
         }
 
-        public Task GetMessageAsync()
+        public void Dispose()
+        {
+            _clientWebSocket?.Dispose();
+            _globalCancellationToken.Cancel();
+            _globalCancellationToken.Dispose();
+        }
+
+        public Task GetMessageAsync(int msgSize)
         {
             return Task.Factory.StartNew(() =>
             {
-                var buffer = new byte[1024 * 4];
+                var buffer = new byte[msgSize];
                 while (ConnectionIsOpen())
                 {
                     var result = _clientWebSocket.ReceiveAsync(
                         new ArraySegment<byte>(buffer),
-                        CancellationToken.None
+                        _globalCancellationToken.Token
                     ).Result;
 
                     if (result.MessageType == WebSocketMessageType.Text)
@@ -79,7 +91,7 @@ namespace BitfinexAPI
                         OnMessageReceived?.Invoke(this, message);
                     }
                 }
-            }, TaskCreationOptions.AttachedToParent);
+            }, _globalCancellationToken.Token);
         }
 
         public Task SendMessageAsync(string msg)
@@ -93,9 +105,9 @@ namespace BitfinexAPI
                     new ArraySegment<byte>(bytes),
                     WebSocketMessageType.Text,
                     true,
-                    CancellationToken.None
+                    _globalCancellationToken.Token
                 ).Wait();
-            }, TaskCreationOptions.AttachedToParent);
+            }, _globalCancellationToken.Token);
         }
     }
 }
