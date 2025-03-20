@@ -23,6 +23,33 @@ namespace BitfinexAPI
         private static Dictionary<string, int> _subscribedTrades;
         private static Dictionary<int, bool> _subscribtions;
         private long _reconnectAttempts;
+
+        public delegate void ConnectorEventHandler(BitfinexConnector sender);
+
+        public event ConnectorEventHandler? OnWebsocketConnected;
+        public event ConnectorEventHandler? OnWebsocketConnection;
+        public event ConnectorEventHandler? OnWebsocketConnectionError;
+
+        public event ConnectorEventHandler? OnWebsocketSubscribeCandles;
+        public event ConnectorEventHandler? OnWebsocketSubscribeCandlesError;
+
+        public event ConnectorEventHandler? OnWebsocketSubscribeTrades;
+        public event ConnectorEventHandler? OnWebsocketSubscribeTradesError;
+
+        public event ConnectorEventHandler? OnWebsocketUnSubscribeCandles;
+        public event ConnectorEventHandler? OnWebsocketUnSubscribeCandlesError;
+
+        public event ConnectorEventHandler? OnWebsocketUnSubscribeTrades;
+        public event ConnectorEventHandler? OnWebsocketUnSubscribeTradesError;
+
+        public event ConnectorEventHandler? OnRestGettingTrades;
+        public event ConnectorEventHandler? OnRestGetTrades;
+        public event ConnectorEventHandler? OnRestGettingTradesError;
+
+        public event ConnectorEventHandler? OnRestGettingCandleSeries;
+        public event ConnectorEventHandler? OnRestGetCandleSeries;
+        public event ConnectorEventHandler? OnRestGettingCandleSeriesError;
+
         private static string GetKeyFromValue(Dictionary<string, int> dict, int Value)
         {
             return dict.FirstOrDefault(x => x.Value == Value).Key;
@@ -43,7 +70,7 @@ namespace BitfinexAPI
             _clientWebsocketAPI.OnMessageReceived += OnMessageReceived;
             _reconnectAttempts = 0;
             globalCancellationToken = new();
-            Reconnect();
+            Connect();
             ReconnectAttemptsCheck();
 
         }
@@ -82,17 +109,7 @@ namespace BitfinexAPI
                 }
             }, globalCancellationToken.Token);
         }
-        public bool Reconnect()
-        {
-            if (!_clientWebsocketAPI.ConnectionIsOpen() && Interlocked.Read(ref _reconnectAttempts) < 5)
-            {
-                _clientWebsocketAPI.Connect().Wait();
-                _clientWebsocketAPI.GetMessageAsync(32*1024);
-                Interlocked.Increment(ref _reconnectAttempts);
-                return true;
-            }
-            return false;
-        }
+        
         #endregion
 
         #region Rest
@@ -100,6 +117,7 @@ namespace BitfinexAPI
         {
             return Task<IEnumerable<Candle>>.Factory.StartNew(() =>
             {
+                OnRestGettingCandleSeries?.Invoke(this);
                 Dictionary<string, string?>? parameters = new Dictionary<string, string?>();
                 bool parametersIsNull = true;
                 {
@@ -124,9 +142,21 @@ namespace BitfinexAPI
                     }
                 }
                 string candleName = "trade:1m:" + pair + ":p" + periodInSec.ToString();
+               
                 var jsonBody = _clientRestAPI.GetCandlesAsync(candleName, "hist", parameters).Result;
 
+                if (jsonBody is null)
+                {
+                    OnRestGettingCandleSeriesError?.Invoke(this);
+                    return new List<Candle>();
+                }
+
                 var strList = JsonSerializer.Deserialize<List<List<double>>>(jsonBody);
+                if (strList is null)
+                {
+                    OnRestGettingCandleSeriesError?.Invoke(this);
+                    return new List<Candle>();
+                }
                 var candleList = new List<Candle>();
                 foreach (var innerList in strList)
                 {
@@ -145,6 +175,7 @@ namespace BitfinexAPI
 
                     candleList.Add(candle);
                 }
+                OnRestGetCandleSeries?.Invoke(this);
                 return candleList;
             }, globalCancellationToken.Token);
         }
@@ -153,11 +184,26 @@ namespace BitfinexAPI
         {
             return Task<IEnumerable<Trade>>.Factory.StartNew(() =>
             {
+                OnRestGettingTrades?.Invoke(this);
+                
+                
                 var jsonBody = _clientRestAPI.GetTradesAsync("t" + pair, new Dictionary<string, string?> 
                 { 
                     ["limit"] = maxCount.ToString()
                 }).Result;
+                if (jsonBody is null)
+                {
+                    OnRestGettingTradesError?.Invoke(this);
+                    return new List<Trade>();
+                }
+                    
                 var strList = JsonSerializer.Deserialize<List<List<string>>>(jsonBody);
+                
+                if (strList is null)
+                {
+                    OnRestGettingTradesError?.Invoke(this);
+                    return new List<Trade>();
+                }
                 var tradeList = new List<Trade>();
                 foreach(var innerList in strList)
                 {
@@ -173,12 +219,27 @@ namespace BitfinexAPI
                     trade.Price = decimal.Parse(iterator.Current);
                     tradeList.Add(trade);
                 }
+                OnRestGetTrades?.Invoke(this);
                 return tradeList;
             }, globalCancellationToken.Token);
         }
         #endregion
 
         #region Socket
+        public bool Connect()
+        {
+            OnWebsocketConnection?.Invoke(this);
+            if (!_clientWebsocketAPI.ConnectionIsOpen() && Interlocked.Read(ref _reconnectAttempts) < 5)
+            {
+                _clientWebsocketAPI.Connect().Wait();
+                _clientWebsocketAPI.GetMessageAsync(32 * 1024);
+                Interlocked.Increment(ref _reconnectAttempts);
+                OnWebsocketConnected?.Invoke(this);
+                return true;
+            }
+            OnWebsocketConnectionError?.Invoke(this);
+            return false;
+        }
         public event Action<Trade>? NewBuyTrade;
         public event Action<Trade>? NewSellTrade;
         public event Action<Candle>? CandleSeriesProcessing;
@@ -394,10 +455,12 @@ namespace BitfinexAPI
                     ["to"] = to?.ToUnixTimeMilliseconds().ToString(),
                     ["limit"] = count.ToString(),
                 })).Wait();
+                OnWebsocketSubscribeCandles?.Invoke(this);
             }
             catch (Exception ex)
             {
-                Reconnect();
+                OnWebsocketSubscribeCandlesError?.Invoke(this);
+                Connect();
             }
         }
 
@@ -413,10 +476,12 @@ namespace BitfinexAPI
                     ["symbol"] = pair,
                     ["len"] = maxCount.ToString(),
                 })).Wait();
+                OnWebsocketSubscribeTrades?.Invoke(this);
             }
             catch (Exception ex)
             {
-                Reconnect();
+                Connect();
+                OnWebsocketSubscribeTradesError?.Invoke(this);
             }
         }
 
@@ -431,10 +496,12 @@ namespace BitfinexAPI
                     ["event"] = "unsubscribe",
                     ["chanId"] = _subscribedCandles[pair].ToString(),
                 })).Wait();
+                OnWebsocketUnSubscribeCandles?.Invoke(this);
             }
             catch (Exception ex)
             {
-                Reconnect();
+                Connect();
+                OnWebsocketUnSubscribeCandlesError?.Invoke(this);
             }
         }
 
@@ -449,10 +516,12 @@ namespace BitfinexAPI
                     ["event"] = "unsubscribe",
                     ["chanId"] = _subscribedTrades[pair].ToString(),
                 })).Wait();
+                OnWebsocketUnSubscribeTrades?.Invoke(this);
             }
             catch (Exception ex)
             {
-                Reconnect();
+                Connect();
+                OnWebsocketUnSubscribeTradesError?.Invoke(this);
             }
         }
 

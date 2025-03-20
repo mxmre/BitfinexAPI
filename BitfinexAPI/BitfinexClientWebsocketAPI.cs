@@ -68,6 +68,7 @@ namespace BitfinexAPI
 
         public void Dispose()
         {
+            Disconnect().Wait();
             _clientWebSocket?.Dispose();
             _globalCancellationToken.Cancel();
             _globalCancellationToken.Dispose();
