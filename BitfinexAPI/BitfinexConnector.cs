@@ -223,7 +223,7 @@ namespace BitfinexAPI
             }
             return MessageResponseType.Data;
         }
-        static private void OnMessageReceived(IClientWebsocketAPI sender, string msg)
+        private void OnMessageReceived(IClientWebsocketAPI sender, string msg)
         {
             MessageResponseType msgType = GetMsgTypeFromStr(msg);
             Dictionary<string, string>? dict = null;
@@ -273,25 +273,49 @@ namespace BitfinexAPI
                                         {
                                             var trades = root[1].EnumerateArray()
                                             .Select(trade => TradeFromJsonElement(trade, chanId)).ToList();
+                                            foreach(var trade in trades)
+                                            {
+                                                if (trade.Side == "sell")
+                                                {
+                                                    NewSellTrade?.Invoke(trade);
+                                                }
+                                                else
+                                                {
+                                                    NewBuyTrade?.Invoke(trade);
+                                                }
+                                            }
                                         }
                                         // Candle Snapshot
                                         else
                                         {
                                             var candles = root[1].EnumerateArray()
                                            .Select(candle => CandleFromJsonElement(candle)).ToList();
+                                            foreach (var candle in candles)
+                                            {
+                                                CandleSeriesProcessing?.Invoke(candle);
+                                            }
                                         }
                                     }
 
                                     // Candle Update
                                     else if (root[1][0].ValueKind != JsonValueKind.Array && channelIsCandle)
                                     {
-                                        var candle = CandleFromJsonElement(root[1]);
+                                        Candle candle = CandleFromJsonElement(root[1]);
+                                        CandleSeriesProcessing?.Invoke(candle);
                                     }
                                     // Trade Update
                                     if (root[1].ValueKind == JsonValueKind.String &&
                                         (root[1].GetString() == "te" || root[1].GetString() == "tu"))
                                     {
-                                        var trade = TradeFromJsonElement(root[1], chanId);
+                                        Trade trade = TradeFromJsonElement(root[1], chanId);
+                                        if(trade.Side == "sell")
+                                        {
+                                            NewSellTrade?.Invoke(trade);
+                                        }
+                                        else
+                                        {
+                                            NewBuyTrade?.Invoke(trade);
+                                        }
                                     }
 
 
