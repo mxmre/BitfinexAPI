@@ -70,7 +70,6 @@ namespace BitfinexAPI
             _clientWebsocketAPI.OnMessageReceived += OnMessageReceived;
             _reconnectAttempts = 0;
             globalCancellationToken = new();
-            Connect();
             ReconnectAttemptsCheck();
 
         }
