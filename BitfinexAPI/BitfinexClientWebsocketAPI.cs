@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
@@ -46,7 +47,20 @@ namespace BitfinexAPI
         {
             return _clientWebSocket.State == WebSocketState.Open;
         }
+        private Task RawDisconnect()
+        {
+            return Task.Factory.StartNew(() =>
+            {
+                _clientWebSocket.CloseAsync(
+                        WebSocketCloseStatus.NormalClosure,
+                        "Closing connection",
+                        _globalCancellationToken.Token
+                    ).Wait();
 
+                _clientWebSocket.Dispose();
+                _clientWebSocket = new ClientWebSocket();
+            }, _globalCancellationToken.Token);
+        }
         public Task Disconnect()
         {
             return Task.Factory.StartNew(() =>
@@ -79,19 +93,33 @@ namespace BitfinexAPI
             return Task.Factory.StartNew(() =>
             {
                 var buffer = new byte[msgSize];
-                while (ConnectionIsOpen())
+                try 
                 {
-                    var result = _clientWebSocket.ReceiveAsync(
-                        new ArraySegment<byte>(buffer),
-                        _globalCancellationToken.Token
-                    ).Result;
-
-                    if (result.MessageType == WebSocketMessageType.Text)
+                    while (ConnectionIsOpen())
                     {
-                        var message = Encoding.UTF8.GetString(buffer, 0, result.Count);
-                        OnMessageReceived?.Invoke(this, message);
+                        var result = _clientWebSocket.ReceiveAsync(
+                            new ArraySegment<byte>(buffer),
+                            _globalCancellationToken.Token
+                        ).Result;
+
+                        if (result.MessageType == WebSocketMessageType.Text)
+                        {
+                            var message = Encoding.UTF8.GetString(buffer, 0, result.Count);
+                            OnMessageReceived?.Invoke(this, message);
+                        }
+                        else if (result.MessageType == WebSocketMessageType.Close)
+                        {
+                            RawDisconnect();
+                            break;
+                        }
+
                     }
                 }
+                catch
+                {
+                    RawDisconnect();
+                }
+                
             }, _globalCancellationToken.Token);
         }
 
@@ -99,15 +127,23 @@ namespace BitfinexAPI
         {
             return Task.Factory.StartNew(() =>
             {
-                if (!ConnectionIsOpen())
-                    return;
-                var bytes = Encoding.UTF8.GetBytes(msg);
-                _clientWebSocket.SendAsync(
-                    new ArraySegment<byte>(bytes),
-                    WebSocketMessageType.Text,
-                    true,
-                    _globalCancellationToken.Token
-                ).Wait();
+                try
+                {
+                    if (!ConnectionIsOpen())
+                        return;
+                    var bytes = Encoding.UTF8.GetBytes(msg);
+                    _clientWebSocket.SendAsync(
+                        new ArraySegment<byte>(bytes),
+                        WebSocketMessageType.Text,
+                        true,
+                        _globalCancellationToken.Token
+                    ).Wait();
+                }
+                catch
+                {
+                    RawDisconnect();
+                }
+                
             }, _globalCancellationToken.Token);
         }
     }
