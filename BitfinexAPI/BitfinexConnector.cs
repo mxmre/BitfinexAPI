@@ -27,6 +27,7 @@ namespace BitfinexAPI
         public delegate void ConnectorEventHandler(BitfinexConnector sender);
 
         public event ConnectorEventHandler? OnWebsocketConnected;
+        public event ConnectorEventHandler? OnWebsocketDisConnected;
         public event ConnectorEventHandler? OnWebsocketConnection;
         public event ConnectorEventHandler? OnWebsocketConnectionError;
 
@@ -73,16 +74,14 @@ namespace BitfinexAPI
             ReconnectAttemptsCheck();
 
         }
-        ~BitfinexConnector()
-        {
-            Dispose();
-        }
         public void Dispose()
         {
+            Disconnect();
             globalCancellationToken.Cancel();
-            globalCancellationToken.Dispose();
+            
             _clientRestAPI?.Dispose();
             _clientWebsocketAPI?.Dispose();
+            globalCancellationToken.Dispose();
         }
         private Task ReconnectAttemptsCheck()
         {
@@ -140,7 +139,7 @@ namespace BitfinexAPI
                         parameters = null;
                     }
                 }
-                string candleName = "trade:1m:" + pair + ":p" + periodInSec.ToString();
+                string candleName = "trade:1m:" + pair + (periodInSec == 0 ? "" : ":p" + periodInSec.ToString());
                
                 var jsonBody = _clientRestAPI.GetCandlesAsync(candleName, "hist", parameters).Result;
 
@@ -162,7 +161,7 @@ namespace BitfinexAPI
                     var iterator = innerList.GetEnumerator();
                     //парсим свечу
                     Candle candle = new Candle();
-                    candle.Pair = pair;
+                    candle.Pair = pair; iterator.MoveNext();
                     candle.OpenTime = DateTimeOffset.FromUnixTimeMilliseconds
                         ((long)iterator.Current); iterator.MoveNext();
                     candle.OpenPrice = (decimal)iterator.Current; iterator.MoveNext();
@@ -170,7 +169,7 @@ namespace BitfinexAPI
                     candle.HighPrice = (decimal)(iterator.Current); iterator.MoveNext();
                     candle.LowPrice = (decimal)(iterator.Current); iterator.MoveNext();
                     candle.TotalVolume = (decimal)(iterator.Current);
-                    candle.TotalPrice = candle.OpenPrice - candle.ClosePrice;
+                    candle.TotalPrice = candle.ClosePrice;
 
                     candleList.Add(candle);
                 }
@@ -209,7 +208,7 @@ namespace BitfinexAPI
                     var iterator = innerList.GetEnumerator();
 
                     Trade trade = new Trade();
-                    trade.Pair = pair;
+                    trade.Pair = pair; iterator.MoveNext();
                     trade.Id = iterator.Current; iterator.MoveNext();
                     trade.Time = DateTimeOffset.FromUnixTimeMilliseconds
                         (int.Parse(iterator.Current)); iterator.MoveNext();
@@ -238,6 +237,12 @@ namespace BitfinexAPI
             }
             OnWebsocketConnectionError?.Invoke(this);
             return false;
+        }
+
+        public void Disconnect()
+        {
+            OnWebsocketDisConnected?.Invoke(this);
+            _clientWebsocketAPI.Disconnect().Wait();
         }
         public event Action<Trade>? NewBuyTrade;
         public event Action<Trade>? NewSellTrade;
@@ -309,15 +314,16 @@ namespace BitfinexAPI
                                     Side = elem[2].GetDecimal() < 0.0M ? "sell" : "buy",
                                     Pair = GetKeyFromValue(_subscribedTrades, chanId)
                                 };
-                                Func<JsonElement, Candle> CandleFromJsonElement = (JsonElement elem) => new Candle
+                                Func<JsonElement, int, Candle> CandleFromJsonElement = (JsonElement elem, int chanId) => new Candle
                                 {
+                                    Pair = GetKeyFromValue(_subscribedCandles, chanId),
                                     OpenTime = DateTimeOffset.FromUnixTimeMilliseconds(elem[0].GetInt64()),
                                     OpenPrice = elem[1].GetDecimal(),
                                     ClosePrice = elem[2].GetDecimal(),
                                     HighPrice = elem[3].GetDecimal(),
                                     LowPrice = elem[4].GetDecimal(),
                                     TotalVolume = elem[5].GetDecimal(),
-                                    TotalPrice = elem[1].GetDecimal() - elem[2].GetDecimal(),
+                                    TotalPrice = elem[2].GetDecimal(),
                                 };
                                 var root = doc.RootElement;
 
@@ -328,39 +334,13 @@ namespace BitfinexAPI
 
                                     if (root[1][0].ValueKind == JsonValueKind.Array)
                                     {
-                                        // Trade Snapshot
-                                        if (!channelIsCandle)
-                                        {
-                                            var trades = root[1].EnumerateArray()
-                                            .Select(trade => TradeFromJsonElement(trade, chanId)).ToList();
-                                            foreach(var trade in trades)
-                                            {
-                                                if (trade.Side == "sell")
-                                                {
-                                                    NewSellTrade?.Invoke(trade);
-                                                }
-                                                else
-                                                {
-                                                    NewBuyTrade?.Invoke(trade);
-                                                }
-                                            }
-                                        }
-                                        // Candle Snapshot
-                                        else
-                                        {
-                                            var candles = root[1].EnumerateArray()
-                                           .Select(candle => CandleFromJsonElement(candle)).ToList();
-                                            foreach (var candle in candles)
-                                            {
-                                                CandleSeriesProcessing?.Invoke(candle);
-                                            }
-                                        }
+                                        
                                     }
 
                                     // Candle Update
                                     else if (root[1][0].ValueKind != JsonValueKind.Array && channelIsCandle)
                                     {
-                                        Candle candle = CandleFromJsonElement(root[1]);
+                                        Candle candle = CandleFromJsonElement(root[1], chanId);
                                         CandleSeriesProcessing?.Invoke(candle);
                                     }
                                     // Trade Update

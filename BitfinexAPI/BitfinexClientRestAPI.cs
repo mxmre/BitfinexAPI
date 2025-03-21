@@ -18,7 +18,7 @@ namespace BitfinexAPI
         static BitfinexClientRestAPI()
         {
             _httpClient = new HttpClient();
-            _httpClient.Timeout = new TimeSpan(TimeSpan.TicksPerSecond * 15);
+            _httpClient.Timeout = new TimeSpan(TimeSpan.TicksPerSecond * 60);
         }
         public BitfinexClientRestAPI()
         {
